@@ -9,7 +9,7 @@
     "document",
     "vector"
   ],
-  "version": "0.7.0",
+  "version": "0.7.1",
   "homepage": "http://pdfkit.org/",
   "author": {
     "name": "Devon Govett",
@@ -18,9 +18,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/devongovett/pdfkit.git"
+    "url": "https://github.com/nathanklick/pdfkit.git"
   },
-  "bugs": "http://github.com/devongovett/pdfkit/issues",
+  "bugs": "http://github.com/nathanklick/pdfkit/issues",
   "devDependencies": {
     "coffee-script": ">=1.0.1",
     "codemirror": "~3.20.0",
@@ -48,6 +48,6 @@
     ]
   },
   "engine": [
-    "node >= v0.10.0"
+    "node >= v0.8.7"
   ]
 }
