@@ -1,5 +1,5 @@
 {
-  "name": "pdfkit",
+  "name": "pdfkit-nk",
   "description": "A PDF generation library for Node.js",
   "keywords": [
     "pdf",
@@ -12,8 +12,8 @@
   "version": "0.7.1",
   "homepage": "http://pdfkit.org/",
   "author": {
-    "name": "Devon Govett",
-    "email": "devongovett@gmail.com",
+    "name": "Nathan Klick",
+    "email": "nathanklick@yahoo.com",
     "url": "http://badassjs.com/"
   },
   "repository": {
