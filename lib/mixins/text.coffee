@@ -17,7 +17,7 @@ module.exports =
     lineGap: (@_lineGap) ->
         return this
 
-    getLineGap() ->
+    getLineGap: () ->
 	return @_lineGap
         
     moveDown: (lines = 1) ->
