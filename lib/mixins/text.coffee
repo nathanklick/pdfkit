@@ -17,8 +17,8 @@ module.exports =
     lineGap: (@_lineGap) ->
         return this
 
-    getLineGap: () ->
-	return @_lineGap
+	getLineGap: () ->
+		return @_lineGap
         
     moveDown: (lines = 1) ->
         @y += @currentLineHeight(true) * lines + @_lineGap
