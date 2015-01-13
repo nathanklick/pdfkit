@@ -3,218 +3,169 @@ PDFDocument - represents an entire PDF document
 By Devon Govett
 ###
 
-stream = require 'stream'
 fs = require 'fs'
+PDFObjectStore = require './store'
 PDFObject = require './object'
 PDFReference = require './reference'
 PDFPage = require './page'
 
-class PDFDocument extends stream.Readable
-  constructor: (@options = {}) ->
-    super
+class PDFDocument
+    constructor: (@options = {}) ->
+        # PDF version
+        @version = 1.3
+        
+        # Whether streams should be compressed
+        @compress = yes
+        
+        # The PDF object store
+        @store = new PDFObjectStore
+        
+        # A list of pages in this document
+        @pages = []
+        
+        # The current page
+        @page = null
+        
+        # Initialize mixins
+        @initColor()
+        @initVector()
+        @initFonts()
+        @initText()
+        @initImages()
+        
+        # Create the metadata
+        @_info = @ref
+            Producer: 'PDFKit'
+            Creator: 'PDFKit'
+            CreationDate: new Date()
+                
+        @info = @_info.data
+        if @options.info
+            @info[key] = val for key, val of @options.info
+            delete @options.info
+        
+        # Add the first page
+        @addPage()
     
-    # PDF version
-    @version = 1.3
+    mixin = (name) =>
+        methods = require './mixins/' + name
+        for name, method of methods
+            this::[name] = method
     
-    # Whether streams should be compressed
-    @compress = @options.compress ? yes
-    
-    @_pageBuffer = []
-    @_pageBufferStart = 0
-
-    # The PDF object store
-    @_offsets = []
-    @_waiting = 0
-    @_ended = false
-    @_offset = 0
+    # Load mixins
+    mixin 'color'
+    mixin 'vector'
+    mixin 'fonts'
+    mixin 'text'
+    mixin 'images'
+    mixin 'annotations'
+        
+    addPage: (options = @options) ->
+        # create a page object
+        @page = new PDFPage(this, options)
+        
+        # add the page to the object store
+        @store.addPage @page
+        @pages.push @page
+        
+        # reset x and y coordinates
+        @x = @page.margins.left
+        @y = @page.margins.top
+        
+        # flip PDF coordinate system so that the origin is in
+        # the top left rather than the bottom left
+        @_ctm = [1, 0, 0, 1, 0, 0]
+        @transform 1, 0, 0, -1, 0, @page.height
+        
+        return this
+        
+    ref: (data) ->
+        @store.ref(data)
+        
+    addContent: (str) ->
+        @page.content.add str
+        return this # make chaining possible
+        
+    write: (filename, fn) ->
+        @output (out) ->
+            fs.writeFile filename, out, 'binary', fn
+        
+    output: (fn) ->
+       @finalize =>
+           out = []
+           @generateHeader out
+           @generateBody out, =>
+               @generateXRef out
+               @generateTrailer out
+               
+               ret = ''
+               for k in out
+                   ret += k + '\n'
+                   
+               fn ret
+        
+    finalize: (fn) ->
+        # convert strings in the info dictionary to literals
+        for key, val of @info when typeof val is 'string'
+            @info[key] = PDFObject.s val
+        
+        # embed the subsetted fonts
+        @embedFonts =>
+            # embed the images
+            @embedImages =>
+                done = 0
+                cb = => fn() if ++done is @pages.length
             
-    @_root = @ref
-      Type: 'Catalog'
-      Pages: @ref
-        Type: 'Pages'
-        Count: 0
-        Kids: []
-    
-    # The current page
-    @page = null
-    
-    # Initialize mixins
-    @initColor()
-    @initVector()
-    @initFonts()
-    @initText()
-    @initImages()
-    
-    # Initialize the metadata
-    @info =
-      Producer: 'PDFKit'
-      Creator: 'PDFKit'
-      CreationDate: new Date()
-
-    if @options.info
-      for key, val of @options.info
-        @info[key] = val
-      
-    # Write the header
-    # PDF version
-    @_write "%PDF-#{@version}"
-
-    # 4 binary chars, as recommended by the spec
-    @_write "%\xFF\xFF\xFF\xFF"
-    
-    # Add the first page
-    @addPage()
-  
-  mixin = (methods) =>
-    for name, method of methods
-      this::[name] = method
-  
-  # Load mixins
-  mixin require './mixins/color'
-  mixin require './mixins/vector'
-  mixin require './mixins/fonts'
-  mixin require './mixins/text'
-  mixin require './mixins/images'
-  mixin require './mixins/annotations'
-    
-  addPage: (options = @options) ->
-    # end the current page if needed
-    @flushPages() unless @options.bufferPages
-
-    # create a page object
-    @page = new PDFPage(this, options)
-    @_pageBuffer.push(@page)
-
-    # add the page to the object store
-    pages = @_root.data.Pages.data
-    pages.Kids.push @page.dictionary
-    pages.Count++
-    
-    # reset x and y coordinates
-    @x = @page.margins.left
-    @y = @page.margins.top
-    
-    # flip PDF coordinate system so that the origin is in
-    # the top left rather than the bottom left
-    @_ctm = [1, 0, 0, 1, 0, 0]
-    @transform 1, 0, 0, -1, 0, @page.height
-    
-    return this
-
-  bufferedPageRange: -> 
-    return { start: @_pageBufferStart, count: @_pageBuffer.length }
-
-  switchToPage: (n) ->
-    unless page = @_pageBuffer[n - @_pageBufferStart]
-      throw new Error "switchToPage(#{n}) out of bounds, current buffer covers pages #{@_pageBufferStart} to #{@_pageBufferStart + @_pageBuffer.length - 1}"
-      
-    @page = page
-
-  flushPages: ->
-    # this local variable exists so we're future-proof against
-    # reentrant calls to flushPages.
-    pages = @_pageBuffer
-    @_pageBuffer = []
-    @_pageBufferStart += pages.length
-    for page in pages
-      page.end()
-      
-    return
-
-  ref: (data) ->
-    ref = new PDFReference(this, @_offsets.length + 1, data)
-    @_offsets.push null # placeholder for this object's offset once it is finalized
-    @_waiting++
-    return ref
-    
-  _read: ->
-      # do nothing, but this method is required by node
-    
-  _write: (data) ->
-    unless Buffer.isBuffer(data)
-      data = new Buffer(data + '\n', 'binary')
-    
-    @push data
-    @_offset += data.length
+                # finalize each page
+                for page in @pages
+                    page.finalize(cb)
         
-  addContent: (data) ->
-    @page.write data
-    return this
-    
-  _refEnd: (ref) ->
-    @_offsets[ref.id - 1] = ref.offset
-    if --@_waiting is 0 and @_ended
-      @_finalize()
-      @_ended = false
-    
-  write: (filename, fn) ->
-    # print a deprecation warning with a stacktrace
-    err = new Error '
-      PDFDocument#write is deprecated, and will be removed in a future version of PDFKit.
-      Please pipe the document into a Node stream.
-    '
-    
-    console.warn err.stack
-    
-    @pipe fs.createWriteStream(filename)
-    @end()
-    @once 'end', fn
-    
-  output: (fn) ->
-    # more difficult to support this. It would involve concatenating all the buffers together
-    throw new Error '
-      PDFDocument#output is deprecated, and has been removed from PDFKit.
-      Please pipe the document into a Node stream.
-    '
-         
-  end: ->
-    @flushPages()
-    @_info = @ref()
-    for key, val of @info
-      if typeof val is 'string'
-        val = PDFObject.s val, true
-              
-      @_info.data[key] = val
-        
-    @_info.end()
-    
-    for name, font of @_fontFamilies
-      font.embed()
-        
-    @_root.end()
-    @_root.data.Pages.end()
-    
-    if @_waiting is 0
-      @_finalize()
-    else
-      @_ended = true
-    
-  _finalize: (fn) ->    
-    # generate xref
-    xRefOffset = @_offset
-    @_write "xref"
-    @_write "0 #{@_offsets.length + 1}"
-    @_write "0000000000 65535 f "
-    
-    for offset in @_offsets
-      offset = ('0000000000' + offset).slice(-10)
-      @_write offset + ' 00000 n '
-        
-    # trailer
-    @_write 'trailer'
-    @_write PDFObject.convert
-      Size: @_offsets.length + 1
-      Root: @_root
-      Info: @_info
-        
-    @_write 'startxref'
-    @_write "#{xRefOffset}"
-    @_write '%%EOF'
+    generateHeader: (out) ->
+        # PDF version
+        out.push "%PDF-#{@version}"
 
-    # end the stream
-    @push null
-    
-  toString: ->
-    "[object PDFDocument]"
-    
+        # 4 binary chars, as recommended by the spec
+        out.push "%\xFF\xFF\xFF\xFF\n"
+        return out
+        
+    generateBody: (out, fn) ->
+        offset = out.join('\n').length
+        
+        refs = (ref for id, ref of @store.objects)
+        do proceed = =>
+            if ref = refs.shift()
+                ref.object @compress, (object) ->
+                    ref.offset = offset
+                    out.push object
+                    offset += object.length + 1
+                    proceed()
+            else
+                @xref_offset = offset
+                fn()
+        
+    generateXRef: (out) ->
+        len = @store.length + 1
+        out.push "xref"
+        out.push "0 #{len}"
+        out.push "0000000000 65535 f "
+
+        for id, ref of @store.objects
+            offset = ('0000000000' + ref.offset).slice(-10)
+            out.push offset + ' 00000 n '
+            
+    generateTrailer: (out) ->
+        trailer = PDFObject.convert
+            Size: @store.length
+            Root: @store.root
+            Info: @_info
+
+        out.push 'trailer'
+        out.push trailer
+        out.push 'startxref'
+        out.push @xref_offset
+        out.push '%%EOF'
+        
+    toString: ->
+        "[object PDFDocument]"
+        
 module.exports = PDFDocument
