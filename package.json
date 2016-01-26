@@ -9,7 +9,7 @@
     "document",
     "vector"
   ],
-  "version": "0.7.6",
+  "version": "0.7.7",
   "homepage": "http://pdfkit.org/",
   "author": {
     "name": "Nathan Klick",
@@ -48,6 +48,6 @@
     ]
   },
   "engine": [
-    "node >= v0.8.7"
+    "node >= v0.10.0"
   ]
 }
