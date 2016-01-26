@@ -86,7 +86,7 @@ class PDFDocument extends stream.Readable
     # create a page object
     @page = new PDFPage(this, options)
     @_pageBuffer.push(@page)
-	@pages = @_pageBuffer
+    @pages = @_pageBuffer
 
     # add the page to the object store
     pages = @_root.data.Pages.data
@@ -120,7 +120,7 @@ class PDFDocument extends stream.Readable
     # reentrant calls to flushPages.
     pages = @_pageBuffer
     @_pageBuffer = []
-	@pages = @_pageBuffer
+    @pages = @_pageBuffer
     @_pageBufferStart += pages.length
     for page in pages
       page.end()
