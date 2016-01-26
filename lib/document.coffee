@@ -37,6 +37,7 @@ class PDFDocument extends stream.Readable
     
     # The current page
     @page = null
+	@pages = @_pageBuffer
     
     # Initialize mixins
     @initColor()
